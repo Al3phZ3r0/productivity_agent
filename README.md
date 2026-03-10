@@ -1,4 +1,4 @@
-# 🤖 Productivity Agent
+#  Productivity Agent
 
 Agente de productividad construido con **DSPy** que sincroniza Google Calendar, ClickUp, Slack y Cortex.
 
