@@ -21,31 +21,6 @@ from tools.calendar_tools import (
 )
 
 
-def build_agent(target_date: date) -> dspy.ReAct:
-    """Construye el agente ReAct con las tools del Morning Sync."""
-
-    # Wrap get_calendar_events_for_date con la fecha ya fijada
-    # para que el agente no tenga que pasarla como argumento
-    date_str = target_date.strftime("%Y-%m-%d")
-
-    def get_events_for_day() -> str:
-        """
-        Obtiene todos los eventos del calendario para el día configurado.
-        Retorna un JSON con la lista de reuniones (título, hora inicio, hora fin, asistentes).
-        """
-        return get_calendar_events_for_date(date_str)
-
-    return dspy.ReAct(
-        signature=MorningSyncSignature,
-        tools=[
-            get_events_for_day,
-            create_clickup_task_for_meeting,
-            get_existing_clickup_tasks,
-        ],
-        max_iters=15,
-    )
-
-
 class MorningSyncSignature(dspy.Signature):
     """
     Eres un asistente de productividad. Tu tarea es sincronizar las reuniones
@@ -59,19 +34,47 @@ class MorningSyncSignature(dspy.Signature):
     4. Al final, reporta cuántas tareas creaste y cuáles ya existían.
     """
     result: str = dspy.OutputField(
-        desc="Resumen de lo que hiciste: cuántas tareas creaste, cuáles ya existían, y si hubo errores."
+        desc="Resumen de lo que hiciste: cuantas tareas creaste, cuales ya existian, y si hubo errores."
     )
 
 
-def run_morning_sync(target_date: Optional[date] = None, verbose: bool = True) -> str:
+def build_agent(target_date: date, calendar_id: str) -> dspy.ReAct:
+    """Construye el agente ReAct con calendar_id y fecha ya fijados."""
+    date_str = target_date.strftime("%Y-%m-%d")
+
+    def get_events_for_day() -> str:
+        """
+        Obtiene todos los eventos del calendario para el dia configurado.
+        Retorna un JSON con la lista de reuniones (titulo, hora inicio, hora fin, asistentes).
+        """
+        return get_calendar_events_for_date(date_str, calendar_id=calendar_id)
+
+    return dspy.ReAct(
+        signature=MorningSyncSignature,
+        tools=[
+            get_events_for_day,
+            create_clickup_task_for_meeting,
+            get_existing_clickup_tasks,
+        ],
+        max_iters=15,
+    )
+
+
+def run_morning_sync(
+    target_date: Optional[date] = None,
+    calendar_id: Optional[str] = None,
+    verbose: bool = True,
+) -> str:
     """
-    Ejecuta el Morning Sync para una fecha específica (default: hoy).
+    Ejecuta el Morning Sync.
 
     Args:
-        target_date: fecha a sincronizar, e.g. date(2026, 2, 25). Default: hoy.
+        target_date: fecha a sincronizar. Default: hoy.
+        calendar_id: Google Calendar ID del usuario. Default: el del .env.
         verbose: imprimir logs en consola.
     """
     target = target_date or date.today()
+    cal_id = calendar_id or config.GOOGLE_CALENDAR_ID
 
     lm = dspy.LM(
         model=f"anthropic/{config.CLAUDE_MODEL}",
@@ -80,18 +83,18 @@ def run_morning_sync(target_date: Optional[date] = None, verbose: bool = True) -
     dspy.configure(lm=lm)
 
     if verbose:
-        print("🌅 Iniciando Morning Sync...")
-        print(f"   Modelo: {config.CLAUDE_MODEL}")
-        print(f"   Fecha:  {target.strftime('%A %d %B %Y')}")
+        print("Morning Sync iniciado...")
+        print(f"  Fecha:    {target.strftime('%A %d %B %Y')}")
+        print(f"  Calendar: {cal_id}")
         print()
 
-    agent = build_agent(target)
+    agent = build_agent(target, cal_id)
     result = agent(result="")
 
     if verbose:
         print()
-        print("✅ Morning Sync completado:")
-        print(f"   {result.result}")
+        print("Morning Sync completado:")
+        print(f"  {result.result}")
 
     return result.result
 

@@ -54,6 +54,7 @@ def cmd_bot():
     from slack_sdk.socket_mode.response import SocketModeResponse
     from slack_sdk.socket_mode.request import SocketModeRequest
     from config.settings import config
+    from utils.user_resolver import UserResolver
 
     if not config.SLACK_APP_TOKEN:
         print("Falta SLACK_APP_TOKEN en el .env (xapp-...)")
@@ -63,11 +64,12 @@ def cmd_bot():
         sys.exit(1)
 
     web_client = WebClient(token=config.SLACK_BOT_TOKEN)
+    resolver = UserResolver()
 
-    def clean_message(text: str) -> str:
+    def clean_message(text):
         return re.sub(r"<@[A-Z0-9]+>", "", text).strip()
 
-    def reply(channel: str, text: str):
+    def reply(channel, text):
         web_client.chat_postMessage(channel=channel, text=text)
 
     def process(client, req):
@@ -89,6 +91,7 @@ def cmd_bot():
 
         channel = event.get("channel", "")
         text_raw = event.get("text", "")
+        slack_user_id = event.get("user", "")
 
         if event_type == "app_mention" or (
             event_type == "message" and event.get("channel_type") == "im"
@@ -104,6 +107,18 @@ def cmd_bot():
                 )
                 return
 
+            # Resolver perfil del usuario desde Cortex
+            print(f"Resolviendo perfil para Slack ID: {slack_user_id}")
+            profile = resolver.get_profile(slack_user_id)
+
+            if not profile:
+                reply(channel,
+                    "No pude identificar tu perfil. "
+                    "Asegurate de que tu informacion este en Cortex."
+                )
+                return
+
+            print(f"Usuario identificado: {profile}")
             text_lower = text.lower().strip()
 
             # Comando morning sync
@@ -119,10 +134,17 @@ def cmd_bot():
                 else:
                     target = date.today()
 
-                reply(channel, f"Iniciando Morning Sync para {target.strftime('%A %d %B %Y')}...")
+                reply(channel,
+                    f"Hola {profile.name}! Iniciando Morning Sync "
+                    f"para {target.strftime('%A %d %B %Y')}..."
+                )
                 try:
                     from flows.morning_sync import run_morning_sync
-                    result = run_morning_sync(target_date=target, verbose=True)
+                    result = run_morning_sync(
+                        target_date=target,
+                        calendar_id=profile.calendar_id,
+                        verbose=True,
+                    )
                     reply(channel, f"Morning Sync completado!\n\n{result}")
                 except Exception as e:
                     print(f"Error en Morning Sync: {e}")
@@ -130,10 +152,14 @@ def cmd_bot():
 
             # EOD report
             else:
-                reply(channel, "Procesando tu reporte... un momento.")
+                reply(channel, f"Procesando tu reporte, {profile.name}... un momento.")
                 try:
                     from flows.eod_flow import run_eod_agent
-                    result = run_eod_agent(text, verbose=True)
+                    result = run_eod_agent(
+                        user_message=text,
+                        user_profile=profile,
+                        verbose=True,
+                    )
                     reply(channel, f"Listo!\n\n{result}")
                 except Exception as e:
                     print(f"Error en agente EOD: {e}")
@@ -146,7 +172,7 @@ def cmd_bot():
     client.socket_mode_request_listeners.append(process)
     client.connect()
 
-    print("Slack Bot iniciado en Socket Mode...")
+    print("Slack Bot iniciado en Socket Mode (multi-usuario)...")
     print("Comandos disponibles desde Slack:")
     print("  morning              -> Morning Sync de hoy")
     print("  morning YYYY-MM-DD   -> Morning Sync de una fecha")
